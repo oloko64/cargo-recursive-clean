@@ -15,4 +15,8 @@ pub struct Arguments {
     /// Clean only the documentation build artifacts
     #[arg(short, long, group = "clean_type")]
     pub doc: bool,
+
+    /// Ignored patterns
+    #[arg(long, value_delimiter = ',')]
+    pub ignored_patterns: Option<Vec<String>>,
 }

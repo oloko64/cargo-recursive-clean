@@ -6,6 +6,8 @@ use owo_colors::OwoColorize;
 use std::{io, path::PathBuf};
 use tokio::task::JoinSet;
 
+const DEFAULT_IGNORED_PATTERNS: &[&str] = &["**/node_modules/**"];
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = arg_parser::Arguments::parse();
 
@@ -16,14 +18,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn run(args: &arg_parser::Arguments) -> Result<(), Box<dyn std::error::Error>> {
-    let cargo_projects = all_cargo_projects(&args.base_dir)?;
     if args.release {
-        println!("{}", "Cleaning only release artifacts".magenta());
+        println!("{}", "Cleaning only release artifacts...".magenta());
     } else if args.doc {
-        println!("{}", "Cleaning only documentation artifacts".magenta());
+        println!("{}", "Cleaning only documentation artifacts...".magenta());
     } else {
-        println!("{}", "Cleaning all artifacts".magenta());
+        println!("{}", "Cleaning all artifacts...".magenta());
     }
+    let cargo_projects = all_cargo_projects(&args.base_dir, &args.ignored_patterns)?;
 
     println!(
         "Found {} cargo projects under: {}\n",
@@ -75,8 +77,17 @@ async fn run_cargo_clean(
     Ok(())
 }
 
-fn all_cargo_projects(base_dir: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
-    let cargo_projects = globwalk::GlobWalkerBuilder::from_patterns(base_dir, &["**/Cargo.toml"])
+fn all_cargo_projects(
+    base_dir: &str,
+    ignored_patterns: &Option<Vec<String>>,
+) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    let mut patterns = vec!["**/Cargo.toml"];
+    if let Some(ignored_patterns) = ignored_patterns {
+        patterns.extend(ignored_patterns.iter().map(String::as_str));
+    } else {
+        patterns.extend(DEFAULT_IGNORED_PATTERNS);
+    }
+    let cargo_projects = globwalk::GlobWalkerBuilder::from_patterns(base_dir, &patterns)
         .build()?
         .filter_map(|entry| {
             let entry = entry.expect("Failed to read entry");
