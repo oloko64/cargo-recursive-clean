@@ -18,20 +18,20 @@ cargo install --path .
 To clean all Rust projects recursively in the current directory:
 
 ```bash
-cargo-clean-recursive
+cargo-recursive-clean
 ```
 
 To clean all Rust projects recursively in a specific directory:
 
 ```bash
-cargo-clean-recursive </path/to/directory>
+cargo-recursive-clean </path/to/directory>
 ```
 
 You can also specify to only clean release or doc artifacts:
 
 ```bash
-cargo-clean-recursive --release
-cargo-clean-recursive --doc
+cargo-recursive-clean --release
+cargo-recursive-clean --doc
 ```
 
 ## License
