@@ -6,7 +6,7 @@ use owo_colors::OwoColorize;
 use std::{io, path::PathBuf};
 use tokio::task::JoinSet;
 
-const DEFAULT_IGNORED_PATTERNS: &[&str] = &["**/node_modules/**"];
+const DEFAULT_IGNORED_PATTERNS: &[&str] = &["!**/node_modules/**"];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = arg_parser::Arguments::parse();
@@ -83,9 +83,25 @@ fn all_cargo_projects(
 ) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     let mut patterns = vec!["**/Cargo.toml"];
     if let Some(ignored_patterns) = ignored_patterns {
-        patterns.extend(ignored_patterns.iter().map(String::as_str));
+        patterns.extend(ignored_patterns.iter().filter_map(|pattern| {
+            if !pattern.trim().is_empty() && pattern.trim().starts_with('!') {
+                Some(pattern.as_str().trim())
+            } else if !pattern.trim().starts_with('!') {
+                eprintln!(
+                    "Error on pattern: {} | Reason: Patterns must start with {}.",
+                    pattern.red(),
+                    "'!'".yellow()
+                );
+                std::process::exit(1);
+            } else {
+                None
+            }
+        }));
     } else {
         patterns.extend(DEFAULT_IGNORED_PATTERNS);
+    }
+    if patterns.len() > 1 {
+        println!("Ignored patterns: {:?}", &patterns[1..]);
     }
     let cargo_projects = globwalk::GlobWalkerBuilder::from_patterns(base_dir, &patterns)
         .build()?
