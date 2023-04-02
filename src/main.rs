@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn run(args: &arg_parser::Arguments) -> Result<(), Box<dyn std::error::Error>> {
-    let cargo_projects = all_cargo_folders(&args.base_dir)?;
+    let cargo_projects = all_cargo_projects(&args.base_dir)?;
     if args.release {
         println!("{}", "Cleaning only release artifacts".magenta());
     } else if args.doc {
@@ -75,7 +75,7 @@ async fn run_cargo_clean(
     Ok(())
 }
 
-fn all_cargo_folders(base_dir: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+fn all_cargo_projects(base_dir: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     let cargo_projects = globwalk::GlobWalkerBuilder::from_patterns(base_dir, &["**/Cargo.toml"])
         .build()?
         .filter_map(|entry| {

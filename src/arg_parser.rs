@@ -2,9 +2,10 @@ use clap::Parser;
 
 #[derive(Parser)]
 #[command(version)]
-/// A utility to clean all cargo projects under a given directory recursively
+/// A CLI app that cleans all Rust projects recursively given a base directory
 pub struct Arguments {
-    /// The directory to search for cargo projects
+    /// The directory to search for cargo projects, defaults to current directory
+    #[arg(default_value = ".")]
     pub base_dir: String,
 
     /// Clean only the release build artifacts
