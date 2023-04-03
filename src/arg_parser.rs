@@ -16,6 +16,14 @@ pub struct Arguments {
     #[arg(short, long, group = "clean_type")]
     pub doc: bool,
 
+    /// Dry run, don't actually clean anything, just print what directories would be cleaned
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Pass confirmation limit without any prompt
+    #[arg(short, long)]
+    pub yes: bool,
+
     /// Ignored patterns
     #[arg(long, value_delimiter = ',')]
     pub ignored_patterns: Option<Vec<String>>,

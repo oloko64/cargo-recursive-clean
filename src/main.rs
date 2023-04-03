@@ -7,6 +7,7 @@ use std::{io, path::PathBuf};
 use tokio::task::JoinSet;
 
 const DEFAULT_IGNORED_PATTERNS: &[&str] = &["!**/node_modules/**"];
+const ASK_CONFIRMATION_LIMIT: usize = 5;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = arg_parser::Arguments::parse();
@@ -29,10 +30,56 @@ async fn run(args: &arg_parser::Arguments) -> Result<(), Box<dyn std::error::Err
 
     println!(
         "Found {} cargo projects under: {}\n",
-        cargo_projects.len(),
+        cargo_projects.len().green(),
         args.base_dir.green()
     );
 
+    if cargo_projects.len() > ASK_CONFIRMATION_LIMIT && !args.yes && !args.dry_run {
+        if ask_confirmation(&format!(
+            "Are you sure you want to clean all {} projects? (y/N)",
+            cargo_projects.len().red()
+        )) {
+            println!(
+                "Cleaning all {} projects...\n",
+                cargo_projects.len().green()
+            );
+        } else {
+            println!("Exiting...");
+            std::process::exit(0);
+        }
+    }
+
+    if cargo_projects.is_empty() {
+        println!("{}", "No projects found, exiting...".yellow());
+        std::process::exit(0);
+    }
+
+    if args.dry_run {
+        println!("{}", "Dry run, nothing will be cleaned.\n".magenta());
+        println!("{}", "The following projects would be cleaned:".green());
+        println!(
+            "{}\n",
+            cargo_projects.iter().map(|p| p.display()).join("\n")
+        );
+        println!(
+            "{} project(s) would be cleaned",
+            cargo_projects.len().green()
+        );
+    } else {
+        clean_projects(args, cargo_projects).await;
+    }
+
+    Ok(())
+}
+
+fn ask_confirmation(msg: &str) -> bool {
+    let mut input = String::new();
+    println!("{msg}");
+    io::stdin().read_line(&mut input).unwrap();
+    input.trim().to_lowercase() == "y"
+}
+
+async fn clean_projects(args: &arg_parser::Arguments, cargo_projects: Vec<PathBuf>) {
     let mut handles = JoinSet::new();
     let release_only = args.release;
     let doc_only = args.doc;
@@ -49,8 +96,6 @@ async fn run(args: &arg_parser::Arguments) -> Result<(), Box<dyn std::error::Err
     }
 
     println!("\nCleaned {} projects", cleaned_successful_count.green());
-
-    Ok(())
 }
 
 async fn run_cargo_clean(

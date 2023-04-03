@@ -24,7 +24,7 @@ cargo-recursive-clean
 To clean all Rust projects recursively in a specific directory:
 
 ```bash
-cargo-recursive-clean </path/to/directory>
+cargo-recursive-clean <path-to-directory>
 ```
 
 You can also specify to only clean release or doc artifacts:
@@ -32,6 +32,14 @@ You can also specify to only clean release or doc artifacts:
 ```bash
 cargo-recursive-clean --release
 cargo-recursive-clean --doc
+```
+
+### Dry run
+
+You can also specify to only print the directories that would be cleaned, without actually cleaning them:
+
+```bash
+cargo-recursive-clean --dry-run
 ```
 
 ### Ignoring patterns
