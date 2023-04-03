@@ -7,7 +7,7 @@ use std::{io, path::PathBuf};
 use tokio::task::JoinSet;
 
 const DEFAULT_IGNORED_PATTERNS: &[&str] = &["!**/node_modules/**"];
-const ASK_CONFIRMATION_LIMIT: usize = 5;
+const ASK_CONFIRMATION_LIMIT: usize = 500;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = arg_parser::Arguments::parse();
