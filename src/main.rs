@@ -3,7 +3,7 @@ mod arg_parser;
 use clap::Parser;
 use itertools::Itertools;
 use owo_colors::OwoColorize;
-use std::{io, path::PathBuf};
+use std::{io::{self, Write}, path::PathBuf};
 use tokio::task::JoinSet;
 
 const DEFAULT_IGNORED_PATTERNS: &[&str] = &["!**/node_modules/**"];
@@ -74,7 +74,8 @@ async fn run(args: &arg_parser::Arguments) -> Result<(), Box<dyn std::error::Err
 
 fn ask_confirmation(msg: &str) -> bool {
     let mut input = String::new();
-    println!("{msg}");
+    print!("{msg} ");
+    io::stdout().flush().unwrap();
     io::stdin().read_line(&mut input).unwrap();
     input.trim().to_lowercase() == "y"
 }
