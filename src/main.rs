@@ -3,7 +3,10 @@ mod arg_parser;
 use clap::Parser;
 use itertools::Itertools;
 use owo_colors::OwoColorize;
-use std::{io::{self, Write}, path::PathBuf};
+use std::{
+    io::{self, Write},
+    path::PathBuf,
+};
 use tokio::task::JoinSet;
 
 const DEFAULT_IGNORED_PATTERNS: &[&str] = &["!**/node_modules/**"];
