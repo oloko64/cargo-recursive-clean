@@ -39,7 +39,7 @@ cargo-recursive-clean --doc
 You can also specify to only print the directories that would be cleaned, without actually cleaning them:
 
 ```bash
-cargo-recursive-clean --dry-run
+cargo-recursive-clean --dry
 ```
 
 ### Ignoring patterns

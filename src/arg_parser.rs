@@ -17,7 +17,7 @@ pub struct Arguments {
     pub doc: bool,
 
     /// Dry run, don't actually clean anything, just print what directories would be cleaned
-    #[arg(long)]
+    #[arg(long = "dry")]
     pub dry_run: bool,
 
     /// Pass confirmation limit without any prompt

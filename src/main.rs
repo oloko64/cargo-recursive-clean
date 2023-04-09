@@ -119,9 +119,10 @@ async fn run_cargo_clean(
         .output()
         .await?;
     println!(
-        "Cleaned: {} {}",
+        "Cleaned: {} {} {}",
         project.as_path().display().green(),
-        String::from_utf8_lossy(&output.stdout).yellow()
+        String::from_utf8_lossy(&output.stdout).red(),
+        String::from_utf8_lossy(&output.stderr).red()
     );
     Ok(())
 }
