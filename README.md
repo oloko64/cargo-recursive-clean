@@ -2,15 +2,10 @@
 
 A CLI app that cleans all Rust projects recursively given a base directory.
 
-## Build
+## Install
 
 ```bash
-cargo build --release
-```
-This will build the app in release mode, and the binary will be available in the `target/release/` directory. Or you can install it:
-
-```bash
-cargo install --path .
+cargo install cargo-recursive-clean
 ```
 
 ## Usage
