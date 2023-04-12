@@ -47,7 +47,7 @@ cargo-recursive-clean --dry
 
 ### Ignoring patterns
 
-You can specify a list of patterns to ignore when cleaning. This is useful if you have a project that you don't want to clean, or if you have a project that you want to clean but it's not a Rust project. By default, the following patterns are ignored: `'!**/node_modules/**'`.
+You can specify a list of patterns to ignore when cleaning. This is useful if you have a project that you don't want to clean, or if you have a project that you want to clean but it's not a Rust project. By default, the following patterns are ignored: `'!**/node_modules/**','!**/target/**'`.
 
 You can also specify a list of patterns to ignore when cleaning, for example:
 
