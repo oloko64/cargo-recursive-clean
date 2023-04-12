@@ -3,6 +3,7 @@ mod arg_parser;
 use clap::Parser;
 use itertools::Itertools;
 use owo_colors::OwoColorize;
+use std::env::args;
 use std::{
     io::{self, Write},
     path::PathBuf,
@@ -13,7 +14,14 @@ const DEFAULT_IGNORED_PATTERNS: &[&str] = &["!**/node_modules/**"];
 const ASK_CONFIRMATION_LIMIT: usize = 500;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = arg_parser::Arguments::parse();
+    // We need to skip the first argument when using the cargo extend feature otherwise it will fail to parse the arguments
+    let mut raw_args = args();
+    // This is a hacky way to make the app work under cargo extend, the name must match the name of the binary in Cargo.toml without the `cargo-` prefix
+    if let Some("recursive-clean") = std::env::args().skip(1).next().as_deref() {
+        raw_args.next();
+    }
+    // Now we can parse the arguments without having to worry about the first argument
+    let args = arg_parser::Arguments::parse_from(raw_args);
 
     run(&args)?;
 
