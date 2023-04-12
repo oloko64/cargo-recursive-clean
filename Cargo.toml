@@ -1,6 +1,6 @@
 [package]
 name = "cargo-recursive-clean"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 authors = ["OLoKo64 <reinaldorozatoj.11cg1@aleeas.com>"]
 description = "A CLI app that cleans all Rust projects recursively given a base directory."

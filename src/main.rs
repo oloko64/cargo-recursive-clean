@@ -29,12 +29,12 @@ async fn run(args: &arg_parser::Arguments) -> Result<(), Box<dyn std::error::Err
     } else {
         println!("{}", "Cleaning all artifacts...".magenta());
     }
-    let cargo_projects = all_cargo_projects(&args.base_dir, &args.ignored_patterns)?;
+    let cargo_projects = all_cargo_projects(&args.path, &args.ignored_patterns)?;
 
     println!(
         "Found {} cargo projects under: {}\n",
         cargo_projects.len().green(),
-        args.base_dir.green()
+        args.path.green()
     );
 
     if cargo_projects.len() > ASK_CONFIRMATION_LIMIT && !args.yes && !args.dry_run {

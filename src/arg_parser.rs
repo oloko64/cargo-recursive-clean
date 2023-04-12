@@ -5,8 +5,8 @@ use clap::Parser;
 /// A CLI app that cleans all Rust projects recursively given a base directory
 pub struct Arguments {
     /// The directory to search for cargo projects, defaults to current directory
-    #[arg(default_value = ".")]
-    pub base_dir: String,
+    #[arg(short, long, default_value = ".")]
+    pub path: String,
 
     /// Clean only the release build artifacts
     #[arg(short, long, group = "clean_type")]
