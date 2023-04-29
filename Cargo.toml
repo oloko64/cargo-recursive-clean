@@ -1,6 +1,6 @@
 [package]
 name = "cargo-recursive-clean"
-version = "0.1.9"
+version = "0.2.0"
 edition = "2021"
 authors = ["OLoKo64 <reinaldorozatoj.11cg1@aleeas.com>"]
 description = "A CLI app that cleans all Rust projects recursively given a base directory."
@@ -18,8 +18,8 @@ strip = true
 codegen-units = 1
 
 [dependencies]
-clap = { version = "4.2.1", features = ["derive"] }
+clap = { version = "4.2.5", features = ["derive"] }
 globwalk = "0.8.1"
 itertools = "0.10.5"
 owo-colors = "3.5.0"
-tokio = { version = "1.27.0", features = ["macros", "rt-multi-thread", "process"] }
+tokio = { version = "1.28.0", features = ["macros", "rt-multi-thread", "process"] }

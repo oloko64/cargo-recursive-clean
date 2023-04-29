@@ -27,7 +27,7 @@ All the option below are also available with this feature.
 To clean all Rust projects recursively in a specific directory:
 
 ```bash
-cargo-recursive-clean -p <path-to-directory>
+cargo-recursive-clean <path-to-directory>
 ```
 
 You can also specify to only clean release or doc artifacts:
