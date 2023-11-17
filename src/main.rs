@@ -118,8 +118,8 @@ async fn run_cargo_clean(
         .await?;
     println!(
         "Cleaned: {} ->> {}",
-        project.as_path().display().green(),
-        String::from_utf8_lossy(&output.stderr).trim().yellow()
+        project.as_path().display().cyan(),
+        String::from_utf8_lossy(&output.stderr).trim().magenta()
     );
     Ok(())
 }
@@ -138,7 +138,7 @@ fn all_cargo_projects() -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
         patterns.extend(DEFAULT_IGNORED_PATTERNS);
     }
     if !patterns.is_empty() {
-        println!("Ignored patterns: {:?}", &patterns);
+        println!("Ignored patterns: {:?}", &patterns.green());
     }
     let glob = wax::Glob::new("**/Cargo.toml")?;
     let cargo_projects = glob
