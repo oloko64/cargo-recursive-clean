@@ -1,3 +1,5 @@
+use std::{env::args, sync::OnceLock};
+
 use clap::Parser;
 
 #[derive(Parser)]
@@ -27,4 +29,19 @@ pub struct Arguments {
     /// Ignored patterns
     #[arg(long, value_delimiter = ',')]
     pub ignored_patterns: Option<Vec<String>>,
+}
+
+pub fn get_args() -> &'static Arguments {
+    static INSTANCE: OnceLock<Arguments> = OnceLock::new();
+
+    INSTANCE.get_or_init(|| {
+        // We need to skip the first argument when using the cargo extend feature otherwise it will fail to parse the arguments
+        let mut raw_args = args();
+        // This is a hacky way to make the app work under cargo extend, the name must match the name of the binary in Cargo.toml without the `cargo-` prefix
+        if let Some("recursive-clean") = std::env::args().nth(1).as_deref() {
+            raw_args.next();
+        }
+        // Now we can parse the arguments without having to worry about the first argument
+        Arguments::parse_from(raw_args)
+    })
 }

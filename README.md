@@ -47,12 +47,12 @@ cargo-recursive-clean --dry
 
 ### Ignoring patterns
 
-You can specify a list of patterns to ignore when cleaning. This is useful if you have a project that you don't want to clean, or if you have a project that you want to clean but it's not a Rust project. By default, the following patterns are ignored: `'!**/node_modules/**','!**/target/**'`.
+You can specify a list of patterns to ignore when cleaning. This is useful if you have a project that you don't want to clean, or if you have a project that you want to clean but it's not a Rust project. By default, the following patterns are ignored: `'**/node_modules/**','**/target/**'`.
 
 You can also specify a list of patterns to ignore when cleaning, for example:
 
 ```bash
-cargo-recursive-clean --ignored-patterns '!**/node_modules/**,!**/venv/**'
+cargo-recursive-clean --ignored-patterns '**/node_modules/**,**/venv/**'
 ```
 
 This will ignore all `node_modules` and `venv` directories.

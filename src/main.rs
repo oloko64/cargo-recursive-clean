@@ -1,51 +1,45 @@
 mod arg_parser;
 
-use clap::Parser;
 use itertools::Itertools;
 use owo_colors::OwoColorize;
-use std::env::args;
 use std::{
     io::{self, Write},
     path::PathBuf,
 };
 use tokio::task::JoinSet;
 
-const DEFAULT_IGNORED_PATTERNS: &[&str] = &["!**/node_modules/**", "!**/target/**"];
+use crate::arg_parser::get_args;
+
+const DEFAULT_IGNORED_PATTERNS: &[&str] = &["**/node_modules/**", "**/target/**"];
 const ASK_CONFIRMATION_LIMIT: usize = 500;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // We need to skip the first argument when using the cargo extend feature otherwise it will fail to parse the arguments
-    let mut raw_args = args();
-    // This is a hacky way to make the app work under cargo extend, the name must match the name of the binary in Cargo.toml without the `cargo-` prefix
-    if let Some("recursive-clean") = std::env::args().nth(1).as_deref() {
-        raw_args.next();
-    }
-    // Now we can parse the arguments without having to worry about the first argument
-    let args = arg_parser::Arguments::parse_from(raw_args);
-
-    run(&args)?;
+    run()?;
 
     Ok(())
 }
 
 #[tokio::main]
-async fn run(args: &arg_parser::Arguments) -> Result<(), Box<dyn std::error::Error>> {
-    if args.release {
-        println!("{}", "Cleaning only release artifacts...".magenta());
-    } else if args.doc {
-        println!("{}", "Cleaning only documentation artifacts...".magenta());
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    if get_args().release {
+        println!("{}", "Cleaning only release artifacts...".magenta().bold());
+    } else if get_args().doc {
+        println!(
+            "{}",
+            "Cleaning only documentation artifacts...".magenta().bold()
+        );
     } else {
-        println!("{}", "Cleaning all artifacts...".magenta());
+        println!("{}", "Cleaning all artifacts...".magenta().bold());
     }
-    let cargo_projects = all_cargo_projects(&args.path, &args.ignored_patterns)?;
+    let cargo_projects = all_cargo_projects()?;
 
     println!(
         "Found {} cargo projects under: {}\n",
         cargo_projects.len().green(),
-        args.path.green()
+        get_args().path.green()
     );
 
-    if cargo_projects.len() > ASK_CONFIRMATION_LIMIT && !args.yes && !args.dry_run {
+    if cargo_projects.len() > ASK_CONFIRMATION_LIMIT && !get_args().yes && !get_args().dry_run {
         if ask_confirmation(&format!(
             "Are you sure you want to clean all {} projects? (y/N)",
             cargo_projects.len().red()
@@ -56,28 +50,24 @@ async fn run(args: &arg_parser::Arguments) -> Result<(), Box<dyn std::error::Err
             );
         } else {
             println!("Exiting...");
-            std::process::exit(0);
+            return Ok(());
         }
     }
 
     if cargo_projects.is_empty() {
         println!("{}", "No projects found, exiting...".yellow());
-        std::process::exit(0);
+        return Ok(());
     }
 
-    if args.dry_run {
-        println!("{}", "Dry run, nothing will be cleaned.\n".magenta());
-        println!("{}", "The following projects would be cleaned:".green());
+    if get_args().dry_run {
         println!(
-            "{}\n",
-            cargo_projects.iter().map(|p| p.display()).join("\n")
-        );
-        println!(
-            "{} project(s) would be cleaned",
+            "{}\n{}\n\n{} project(s) would be cleaned",
+            "Dry run, nothing will be cleaned.\n\nThe following projects would be cleaned:".green(),
+            cargo_projects.iter().map(|p| p.display()).join("\n"),
             cargo_projects.len().green()
         );
     } else {
-        clean_projects(args, cargo_projects).await;
+        clean_projects(cargo_projects).await;
     }
 
     Ok(())
@@ -91,10 +81,10 @@ fn ask_confirmation(msg: &str) -> bool {
     input.trim().to_lowercase() == "y"
 }
 
-async fn clean_projects(args: &arg_parser::Arguments, cargo_projects: Vec<PathBuf>) {
+async fn clean_projects(cargo_projects: Vec<PathBuf>) {
     let mut handles = JoinSet::new();
-    let release_only = args.release;
-    let doc_only = args.doc;
+    let release_only = get_args().release;
+    let doc_only = get_args().doc;
     for project in cargo_projects {
         handles.spawn(run_cargo_clean(release_only, doc_only, project));
     }
@@ -127,42 +117,33 @@ async fn run_cargo_clean(
         .output()
         .await?;
     println!(
-        "Cleaned: {} {} {}",
+        "Cleaned: {} ->> {}",
         project.as_path().display().green(),
-        String::from_utf8_lossy(&output.stdout).red(),
-        String::from_utf8_lossy(&output.stderr).red()
+        String::from_utf8_lossy(&output.stderr).trim().yellow()
     );
     Ok(())
 }
 
-fn all_cargo_projects(
-    base_dir: &str,
-    ignored_patterns: &Option<Vec<String>>,
-) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
-    let mut patterns = vec!["**/Cargo.toml"];
-    if let Some(ignored_patterns) = ignored_patterns {
+fn all_cargo_projects() -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    let mut patterns = vec![];
+    if let Some(ignored_patterns) = &get_args().ignored_patterns {
         patterns.extend(ignored_patterns.iter().filter_map(|pattern| {
-            if !pattern.trim().is_empty() && pattern.trim().starts_with('!') {
-                Some(pattern.as_str().trim())
-            } else if !pattern.trim().starts_with('!') {
-                eprintln!(
-                    "Error on pattern: {} | Reason: Patterns must start with {}.",
-                    pattern.red(),
-                    "'!'".yellow()
-                );
-                std::process::exit(1);
-            } else {
+            if pattern.trim().is_empty() {
                 None
+            } else {
+                Some(pattern.as_str().trim())
             }
         }));
     } else {
         patterns.extend(DEFAULT_IGNORED_PATTERNS);
     }
-    if patterns.len() > 1 {
-        println!("Ignored patterns: {:?}", &patterns[1..]);
+    if !patterns.is_empty() {
+        println!("Ignored patterns: {:?}", &patterns);
     }
-    let cargo_projects = globwalk::GlobWalkerBuilder::from_patterns(base_dir, &patterns)
-        .build()?
+    let glob = wax::Glob::new("**/Cargo.toml")?;
+    let cargo_projects = glob
+        .walk(&get_args().path)
+        .not(patterns)?
         .filter_map(|entry| {
             let entry = entry.expect("Failed to read entry");
             if entry.file_type().is_file() {
