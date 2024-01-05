@@ -3,6 +3,7 @@ mod arg_parser;
 use itertools::Itertools;
 use owo_colors::OwoColorize;
 use std::{
+    cell::RefCell,
     collections::HashMap,
     io::{self, Write},
     path::PathBuf,
@@ -111,7 +112,7 @@ async fn run_cargo_clean(
 ) -> Result<(), io::Error> {
     let mut args = vec!["clean"];
 
-    if let CargoWorkspace::Parent(parent) = project_info.workspace {
+    if let CargoWorkspace::Parent(parent) = &*project_info.workspace.borrow() {
         println!(
             "Skipping: {} ->> {} {}",
             project_path.as_path().display().cyan(),
@@ -156,7 +157,7 @@ fn all_cargo_projects() -> Result<HashMap<PathBuf, CargoProject>, Box<dyn std::e
         println!("Ignored patterns: {:?}", &patterns.green());
     }
     let glob = wax::Glob::new("**/Cargo.toml")?;
-    let mut cargo_projects = glob
+    let cargo_projects = glob
         .walk(&get_args().path)
         .not(patterns)?
         .filter_map(|entry| {
@@ -191,46 +192,37 @@ fn all_cargo_projects() -> Result<HashMap<PathBuf, CargoProject>, Box<dyn std::e
                     workspace = CargoWorkspace::WorkspaceMembers(sub_workspaces);
                 }
             }
-            (path, CargoProject { workspace })
+            (
+                path,
+                CargoProject {
+                    workspace: RefCell::new(workspace),
+                },
+            )
         })
         .collect::<HashMap<PathBuf, CargoProject>>();
 
-    find_cargo_workspaces(&mut cargo_projects);
+    find_cargo_workspaces(&cargo_projects);
 
     Ok(cargo_projects)
 }
 
-fn find_cargo_workspaces(cargo_projects: &mut HashMap<PathBuf, CargoProject>) {
-    let mut sub_workspace_cargo_projects = HashMap::new();
-    // Need to reborrow cargo_projects as immutable here
-    for (project_path, project) in &*cargo_projects {
-        if let CargoWorkspace::WorkspaceMembers(sub_paths) = &project.workspace {
+fn find_cargo_workspaces(cargo_projects: &HashMap<PathBuf, CargoProject>) {
+    for (project_path, project) in cargo_projects {
+        if let CargoWorkspace::WorkspaceMembers(sub_paths) = &*project.workspace.borrow() {
             for sub_path in sub_paths {
-                if cargo_projects.get(sub_path).is_some() {
-                    sub_workspace_cargo_projects.insert(
-                        sub_path.clone(),
-                        Some(CargoProject {
-                            workspace: CargoWorkspace::Parent(project_path.clone()),
-                        }),
-                    );
+                if let Some(project) = cargo_projects.get(sub_path) {
+                    // RefCell is used here to allow for interior mutability of the workspace
+                    // As we would have two borrows of cargo_projects otherwise one being mutable
+                    *project.workspace.borrow_mut() = CargoWorkspace::Parent(project_path.clone());
                 }
             }
-        }
-    }
-
-    for (sub_path, mut sub_workspace_cargo_project) in sub_workspace_cargo_projects {
-        if let Some(project) = cargo_projects.get_mut(&sub_path) {
-            let CargoProject { workspace, .. } = sub_workspace_cargo_project
-                .take()
-                .expect("Failed to find sub workspace, should not happen");
-            project.workspace = workspace;
         }
     }
 }
 
 #[derive(Debug, Clone)]
 struct CargoProject {
-    workspace: CargoWorkspace,
+    workspace: RefCell<CargoWorkspace>,
 }
 
 #[derive(Debug, Clone)]
