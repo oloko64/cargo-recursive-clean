@@ -3,6 +3,7 @@ mod arg_parser;
 use itertools::Itertools;
 use owo_colors::OwoColorize;
 use std::{
+    collections::HashMap,
     io::{self, Write},
     path::PathBuf,
 };
@@ -63,7 +64,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "{}\n{}\n\n{} project(s) would be cleaned",
             "Dry run, nothing will be cleaned.\n\nThe following projects would be cleaned:".green(),
-            cargo_projects.iter().map(ToString::to_string).join("\n"),
+            cargo_projects
+                .keys()
+                .map(|path| path.display().to_string())
+                .join("\n"),
             cargo_projects.len().green()
         );
     } else {
@@ -81,7 +85,7 @@ fn ask_confirmation(msg: &str) -> bool {
     input.trim().to_lowercase() == "y"
 }
 
-async fn clean_projects(cargo_projects: Vec<CargoProject>) {
+async fn clean_projects(cargo_projects: HashMap<PathBuf, CargoProject>) {
     let mut handles = JoinSet::new();
     let release_only = get_args().release;
     let doc_only = get_args().doc;
@@ -103,18 +107,14 @@ async fn clean_projects(cargo_projects: Vec<CargoProject>) {
 async fn run_cargo_clean(
     release_only: bool,
     doc_only: bool,
-    project: CargoProject,
+    (project_path, project_info): (PathBuf, CargoProject),
 ) -> Result<(), io::Error> {
     let mut args = vec!["clean"];
-    let CargoProject {
-        path: project,
-        workspace: is_workspace,
-    } = project;
 
-    if let CargoWorkspace::Parent(parent) = is_workspace {
+    if let CargoWorkspace::Parent(parent) = project_info.workspace {
         println!(
             "Skipping: {} ->> {} {}",
-            project.as_path().display().cyan(),
+            project_path.as_path().display().cyan(),
             parent.display().cyan(),
             "(workspace)".yellow()
         );
@@ -127,19 +127,19 @@ async fn run_cargo_clean(
         args.push("--doc");
     }
     let output = tokio::process::Command::new("cargo")
-        .current_dir(&project)
+        .current_dir(&project_path)
         .args(&args)
         .output()
         .await?;
     println!(
         "Cleaned: {} ->> {}",
-        project.as_path().display().cyan(),
+        project_path.as_path().display().cyan(),
         String::from_utf8_lossy(&output.stderr).trim().magenta()
     );
     Ok(())
 }
 
-fn all_cargo_projects() -> Result<Vec<CargoProject>, Box<dyn std::error::Error>> {
+fn all_cargo_projects() -> Result<HashMap<PathBuf, CargoProject>, Box<dyn std::error::Error>> {
     let mut patterns = vec![];
     if let Some(ignored_patterns) = &get_args().ignored_patterns {
         patterns.extend(ignored_patterns.iter().filter_map(|pattern| {
@@ -180,52 +180,56 @@ fn all_cargo_projects() -> Result<Vec<CargoProject>, Box<dyn std::error::Error>>
                 if toml.contains("[workspace]") {
                     let parsed =
                         toml::from_str::<toml::Value>(&toml).expect("Failed to parse toml");
-                    let members = parsed["workspace"]["members"]
+                    let sub_workspaces = parsed["workspace"]["members"]
                         .as_array()
                         .cloned()
-                        .expect("Failed to parse members")
+                        .expect("Failed to get workspace members")
                         .into_iter()
                         .filter_map(|member| member.as_str().map(ToOwned::to_owned))
                         .map(|member| path.join(member))
                         .collect::<Vec<PathBuf>>();
-                    workspace = CargoWorkspace::WorkspaceMembers(members);
+                    workspace = CargoWorkspace::WorkspaceMembers(sub_workspaces);
                 }
             }
-            CargoProject { path, workspace }
+            (path, CargoProject { workspace })
         })
-        .collect::<Vec<CargoProject>>();
+        .collect::<HashMap<PathBuf, CargoProject>>();
 
-    let mut sub_workspace_cargo_projects = vec![];
-    for project in &cargo_projects {
-        if let CargoWorkspace::WorkspaceMembers(members) = &project.workspace {
-            for member in members {
-                if let Some(cargo_project) = cargo_projects
-                    .iter()
-                    .find(|project| &project.path == member)
-                {
-                    sub_workspace_cargo_projects.push(CargoProject {
-                        path: cargo_project.path.clone(),
-                        workspace: CargoWorkspace::Parent(project.path.clone()),
-                    });
-                }
-            }
-        }
-    }
-
-    for project in &mut cargo_projects {
-        for sub_workspace_cargo_project in &sub_workspace_cargo_projects {
-            if &project.path == &sub_workspace_cargo_project.path {
-                project.workspace = sub_workspace_cargo_project.workspace.clone();
-            }
-        }
-    }
+    find_cargo_workspaces(&mut cargo_projects);
 
     Ok(cargo_projects)
 }
 
+fn find_cargo_workspaces(cargo_projects: &mut HashMap<PathBuf, CargoProject>) {
+    let mut sub_workspace_cargo_projects = HashMap::new();
+    // Need to reborrow cargo_projects as immutable here
+    for (project_path, project) in &*cargo_projects {
+        if let CargoWorkspace::WorkspaceMembers(sub_paths) = &project.workspace {
+            for sub_path in sub_paths {
+                if cargo_projects.get(sub_path).is_some() {
+                    sub_workspace_cargo_projects.insert(
+                        sub_path.clone(),
+                        Some(CargoProject {
+                            workspace: CargoWorkspace::Parent(project_path.clone()),
+                        }),
+                    );
+                }
+            }
+        }
+    }
+
+    for (sub_path, mut sub_workspace_cargo_project) in sub_workspace_cargo_projects {
+        if let Some(project) = cargo_projects.get_mut(&sub_path) {
+            let CargoProject { workspace, .. } = sub_workspace_cargo_project
+                .take()
+                .expect("Failed to find sub workspace, should not happen");
+            project.workspace = workspace;
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct CargoProject {
-    path: PathBuf,
     workspace: CargoWorkspace,
 }
 
@@ -234,18 +238,4 @@ enum CargoWorkspace {
     WorkspaceMembers(Vec<PathBuf>),
     Parent(PathBuf),
     None,
-}
-
-impl std::fmt::Display for CargoProject {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.workspace {
-            CargoWorkspace::WorkspaceMembers(_) => {
-                write!(f, "{} {}", self.path.display(), "(workspace)".yellow())
-            }
-            CargoWorkspace::Parent(_) => {
-                write!(f, "{} {}", self.path.display(), "(parent)".yellow())
-            }
-            CargoWorkspace::None => write!(f, "{}", self.path.display()),
-        }
-    }
 }
