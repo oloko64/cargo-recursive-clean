@@ -15,6 +15,18 @@ use crate::arg_parser::get_args;
 const DEFAULT_IGNORED_PATTERNS: &[&str] = &["**/node_modules/**", "**/target/**"];
 const ASK_CONFIRMATION_LIMIT: usize = 500;
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct CargoProject {
+    workspace: RefCell<CargoWorkspace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum CargoWorkspace {
+    WorkspaceMembers(Vec<PathBuf>),
+    Parent(PathBuf),
+    None,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     run()?;
 
@@ -220,14 +232,84 @@ fn find_cargo_workspaces(cargo_projects: &HashMap<PathBuf, CargoProject>) {
     }
 }
 
-#[derive(Debug, Clone)]
-struct CargoProject {
-    workspace: RefCell<CargoWorkspace>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
-enum CargoWorkspace {
-    WorkspaceMembers(Vec<PathBuf>),
-    Parent(PathBuf),
-    None,
+    fn get_base_hashmap() -> HashMap<PathBuf, CargoProject> {
+        let mut cargo_projects = HashMap::new();
+        cargo_projects.insert(
+            std::path::PathBuf::from("/home/user/projects/project1"),
+            CargoProject {
+                workspace: std::cell::RefCell::new(CargoWorkspace::None),
+            },
+        );
+        cargo_projects.insert(
+            std::path::PathBuf::from("/home/user/projects/project2"),
+            CargoProject {
+                workspace: std::cell::RefCell::new(CargoWorkspace::None),
+            },
+        );
+        cargo_projects.insert(
+            std::path::PathBuf::from("/home/user/projects/project3"),
+            CargoProject {
+                workspace: std::cell::RefCell::new(CargoWorkspace::None),
+            },
+        );
+        cargo_projects.insert(
+            std::path::PathBuf::from("/home/user/projects/project4"),
+            CargoProject {
+                workspace: std::cell::RefCell::new(CargoWorkspace::WorkspaceMembers(vec![
+                    std::path::PathBuf::from("/home/user/projects/project1"),
+                    std::path::PathBuf::from("/home/user/projects/project2"),
+                ])),
+            },
+        );
+
+        cargo_projects
+    }
+
+    #[test]
+    fn find_cargo_workspaces_test() {
+        let base_map = get_base_hashmap();
+
+        find_cargo_workspaces(&base_map);
+
+        assert_eq!(
+            *base_map
+                .get(&std::path::PathBuf::from("/home/user/projects/project1"))
+                .unwrap()
+                .workspace
+                .borrow(),
+            CargoWorkspace::Parent(std::path::PathBuf::from("/home/user/projects/project4"))
+        );
+        assert_eq!(
+            *base_map
+                .get(&std::path::PathBuf::from("/home/user/projects/project2"))
+                .unwrap()
+                .workspace
+                .borrow(),
+            CargoWorkspace::Parent(std::path::PathBuf::from("/home/user/projects/project4"))
+        );
+        assert_eq!(
+            *base_map
+                .get(&std::path::PathBuf::from("/home/user/projects/project3"))
+                .unwrap()
+                .workspace
+                .borrow(),
+            CargoWorkspace::None
+        );
+        assert_eq!(
+            *base_map
+                .get(&std::path::PathBuf::from("/home/user/projects/project4"))
+                .unwrap()
+                .workspace
+                .borrow(),
+            CargoWorkspace::WorkspaceMembers(vec![
+                std::path::PathBuf::from("/home/user/projects/project1"),
+                std::path::PathBuf::from("/home/user/projects/project2"),
+            ])
+        );
+    }
 }
