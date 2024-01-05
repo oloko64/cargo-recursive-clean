@@ -212,7 +212,7 @@ fn find_cargo_workspaces(cargo_projects: &HashMap<PathBuf, CargoProject>) {
             for sub_path in sub_paths {
                 if let Some(project) = cargo_projects.get(sub_path) {
                     // RefCell is used here to allow for interior mutability of the workspace
-                    // As we would have two borrows of cargo_projects otherwise one being mutable
+                    // As we need to have two borrows of cargo_projects, one being mutable
                     *project.workspace.borrow_mut() = CargoWorkspace::Parent(project_path.clone());
                 }
             }
