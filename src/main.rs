@@ -173,7 +173,7 @@ fn all_cargo_projects() -> Result<HashMap<PathBuf, CargoProject>, Box<dyn std::e
         .walk(&get_args().path)
         .not(patterns)?
         .filter_map(|entry| {
-            let entry = entry.expect("Failed to read entry");
+            let entry = entry.ok()?;
             if entry.file_type().is_file() {
                 Some(
                     entry
