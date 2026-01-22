@@ -2,6 +2,7 @@ mod arg_parser;
 
 use itertools::Itertools;
 use owo_colors::OwoColorize;
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -33,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if get_args().release {
         println!("{}", "Cleaning only release artifacts...".magenta().bold());
@@ -169,7 +170,7 @@ fn all_cargo_projects() -> Result<HashMap<PathBuf, CargoProject>, Box<dyn std::e
         println!("Ignored patterns: {:?}", &patterns.green());
     }
     let glob = wax::Glob::new("**/Cargo.toml")?;
-    let cargo_projects = glob
+    let paths = glob
         .walk(&get_args().path)
         .not(patterns)?
         .filter_map(|entry| {
@@ -193,6 +194,10 @@ fn all_cargo_projects() -> Result<HashMap<PathBuf, CargoProject>, Box<dyn std::e
             }
         })
         .sorted()
+        .collect::<Vec<PathBuf>>();
+
+    let cargo_projects = paths
+        .into_par_iter()
         .map(|path| {
             let mut workspace = CargoWorkspace::None;
             if let Ok(toml) = std::fs::read_to_string(path.join("Cargo.toml")) {
@@ -203,7 +208,7 @@ fn all_cargo_projects() -> Result<HashMap<PathBuf, CargoProject>, Box<dyn std::e
                         .as_array()
                         .cloned()
                         .expect("Failed to get workspace members")
-                        .into_iter()
+                        .into_par_iter()
                         .filter_map(|member| member.as_str().map(ToOwned::to_owned))
                         .map(|member| path.join(member))
                         .collect::<Vec<PathBuf>>();
