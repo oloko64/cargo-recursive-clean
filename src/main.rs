@@ -2,7 +2,7 @@ mod arg_parser;
 
 use itertools::Itertools;
 use owo_colors::OwoColorize;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -176,9 +176,8 @@ fn all_cargo_projects() -> Result<HashMap<PathBuf, CargoProject>, Box<dyn std::e
         .filter_map(|entry| {
             // print error if we get an error
             let entry = entry
-                .map_err(|err| {
+                .inspect_err(|err| {
                     eprintln!("Error: {}", err.to_string().red());
-                    err
                 })
                 .ok()?;
             if entry.file_type().is_file() {
@@ -200,20 +199,19 @@ fn all_cargo_projects() -> Result<HashMap<PathBuf, CargoProject>, Box<dyn std::e
         .into_par_iter()
         .map(|path| {
             let mut workspace = CargoWorkspace::None;
-            if let Ok(toml) = std::fs::read_to_string(path.join("Cargo.toml")) {
-                if toml.contains("[workspace]") {
-                    let parsed =
-                        toml::from_str::<toml::Value>(&toml).expect("Failed to parse toml");
-                    let sub_workspaces = parsed["workspace"]["members"]
-                        .as_array()
-                        .cloned()
-                        .expect("Failed to get workspace members")
-                        .into_par_iter()
-                        .filter_map(|member| member.as_str().map(ToOwned::to_owned))
-                        .map(|member| path.join(member))
-                        .collect::<Vec<PathBuf>>();
-                    workspace = CargoWorkspace::WorkspaceMembers(sub_workspaces);
-                }
+            if let Ok(toml) = std::fs::read_to_string(path.join("Cargo.toml"))
+                && toml.contains("[workspace]")
+            {
+                let parsed = toml::from_str::<toml::Value>(&toml).expect("Failed to parse toml");
+                let sub_workspaces = parsed["workspace"]["members"]
+                    .as_array()
+                    .cloned()
+                    .expect("Failed to get workspace members")
+                    .into_par_iter()
+                    .filter_map(|member| member.as_str().map(ToOwned::to_owned))
+                    .map(|member| path.join(member))
+                    .collect::<Vec<PathBuf>>();
+                workspace = CargoWorkspace::WorkspaceMembers(sub_workspaces);
             }
             (
                 path,
