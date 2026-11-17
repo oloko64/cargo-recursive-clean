@@ -203,15 +203,7 @@ fn all_cargo_projects() -> Result<HashMap<PathBuf, CargoProject>, Box<dyn std::e
                 && toml.contains("[workspace]")
             {
                 let parsed = toml::from_str::<toml::Value>(&toml).expect("Failed to parse toml");
-                let sub_workspaces = parsed["workspace"]["members"]
-                    .as_array()
-                    .cloned()
-                    .expect("Failed to get workspace members")
-                    .into_par_iter()
-                    .filter_map(|member| member.as_str().map(ToOwned::to_owned))
-                    .map(|member| path.join(member))
-                    .collect::<Vec<PathBuf>>();
-                workspace = CargoWorkspace::WorkspaceMembers(sub_workspaces);
+                workspace = CargoWorkspace::WorkspaceMembers(workspace_members(&parsed, &path));
             }
             (
                 path,
@@ -227,10 +219,34 @@ fn all_cargo_projects() -> Result<HashMap<PathBuf, CargoProject>, Box<dyn std::e
     Ok(cargo_projects)
 }
 
+/// Member directories listed in `[workspace] members`, resolved against `path`.
+///
+/// A `[workspace]` table without `members` is valid (it is commonly used to keep
+/// a crate out of a parent workspace), so a missing list means no members.
+fn workspace_members(parsed: &toml::Value, path: &std::path::Path) -> Vec<PathBuf> {
+    parsed
+        .get("workspace")
+        .and_then(|workspace| workspace.get("members"))
+        .and_then(toml::Value::as_array)
+        .map(|members| {
+            members
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(|member| path.join(member))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn find_cargo_workspaces(cargo_projects: &HashMap<PathBuf, CargoProject>) {
     for (project_path, project) in cargo_projects {
         if let CargoWorkspace::WorkspaceMembers(sub_paths) = &*project.workspace.borrow() {
             for sub_path in sub_paths {
+                // A workspace may list its own directory (`members = ["."]`); it is
+                // already borrowed above, so skip it instead of panicking.
+                if sub_path == project_path {
+                    continue;
+                }
                 if let Some(project) = cargo_projects.get(sub_path) {
                     // RefCell is used here to allow for interior mutability of the workspace
                     // As we need to have two borrows of cargo_projects, one being mutable
@@ -277,6 +293,52 @@ mod tests {
         );
 
         cargo_projects
+    }
+
+    #[test]
+    fn workspace_without_members_has_no_members() {
+        let parsed =
+            toml::from_str::<toml::Value>("[package]\nname = \"a\"\n\n[workspace]\n").unwrap();
+        assert!(workspace_members(&parsed, std::path::Path::new("/p/a")).is_empty());
+    }
+
+    #[test]
+    fn workspace_members_are_resolved_against_path() {
+        let parsed =
+            toml::from_str::<toml::Value>("[workspace]\nmembers = [\"b\", \"c\"]\n").unwrap();
+        assert_eq!(
+            workspace_members(&parsed, std::path::Path::new("/p/a")),
+            vec![PathBuf::from("/p/a/b"), PathBuf::from("/p/a/c")]
+        );
+    }
+
+    #[test]
+    fn find_cargo_workspaces_self_member_test() {
+        let root = PathBuf::from("/home/user/projects/root");
+        let member = PathBuf::from("/home/user/projects/root/member");
+        let mut map = HashMap::new();
+        map.insert(
+            root.clone(),
+            CargoProject {
+                workspace: std::cell::RefCell::new(CargoWorkspace::WorkspaceMembers(vec![
+                    root.join("."),
+                    member.clone(),
+                ])),
+            },
+        );
+        map.insert(
+            member.clone(),
+            CargoProject {
+                workspace: std::cell::RefCell::new(CargoWorkspace::None),
+            },
+        );
+
+        find_cargo_workspaces(&map);
+
+        assert_eq!(
+            *map.get(&member).unwrap().workspace.borrow(),
+            CargoWorkspace::Parent(root.clone())
+        );
     }
 
     #[test]
