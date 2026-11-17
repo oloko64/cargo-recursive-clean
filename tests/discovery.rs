@@ -167,3 +167,64 @@ fn glob_workspace_members_are_linked() {
     assert_eq!(workspace(&ws.join("crates/legacy")), CargoWorkspace::None);
     assert_eq!(workspace(&ws.join("tools/x")), CargoWorkspace::None);
 }
+
+#[test]
+fn nonexhaustive_pattern_still_walks_below() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write_manifest(&root.join("skip"), &package("skip"));
+    write_manifest(&root.join("skip/inner"), &package("inner"));
+
+    let projects = find_cargo_projects(root, &["skip/Cargo.toml"]).unwrap();
+
+    assert_eq!(projects.len(), 1);
+    assert!(projects.contains_key(&root.join("skip/inner")));
+}
+
+#[test]
+fn glob_ignore_pattern_prunes_tree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write_manifest(&root.join("keep"), &package("keep"));
+    write_manifest(&root.join("build-a/x"), &package("x"));
+    write_manifest(&root.join("nested/build-b/y"), &package("y"));
+
+    let projects = find_cargo_projects(root, &["**/build-*/**"]).unwrap();
+
+    assert_eq!(projects.len(), 1);
+    assert!(projects.contains_key(&root.join("keep")));
+}
+
+#[cfg(unix)]
+#[test]
+fn does_not_follow_symlinks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write_manifest(&root.join("real"), &package("real"));
+    std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
+
+    let projects = find_cargo_projects(root, DEFAULT_IGNORED_PATTERNS).unwrap();
+
+    assert_eq!(projects.len(), 1);
+    assert!(projects.contains_key(&root.join("real")));
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_directory_is_skipped() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write_manifest(&root.join("ok"), &package("ok"));
+    let locked = root.join("locked");
+    write_manifest(&locked.join("hidden"), &package("hidden"));
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let result = find_cargo_projects(root, DEFAULT_IGNORED_PATTERNS);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let projects = result.unwrap();
+    assert!(projects.contains_key(&root.join("ok")));
+    // Root can read anything, so only assert the walk did not fail.
+}

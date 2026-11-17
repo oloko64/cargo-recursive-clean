@@ -1,17 +1,14 @@
 pub mod arg_parser;
 
 use owo_colors::OwoColorize;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelRefIterator, ParallelExtend, ParallelIterator};
 use std::{
     cell::RefCell,
     collections::HashMap,
     io,
     path::{Path, PathBuf},
 };
-use wax::{
-    Program,
-    walk::{Entry, FileIterator},
-};
+use wax::Program;
 
 pub const DEFAULT_IGNORED_PATTERNS: &[&str] = &["**/node_modules/**", "**/target/**"];
 pub const ASK_CONFIRMATION_LIMIT: usize = 500;
@@ -148,33 +145,97 @@ pub fn resolve_workspace_members(
     resolved
 }
 
+/// Ignore patterns split the same way `wax` does for `FileIterator::not`.
+///
+/// A directory matching an *exhaustive* pattern (e.g. `**/target/**`) is pruned without
+/// being read. A `Cargo.toml` is skipped when it matches any pattern. Paths are matched
+/// relative to the walk root.
+///
+/// Patterns of the form `**/<name>/**` with a plain `<name>` (the common case, including
+/// the defaults) skip glob compilation and are matched by comparing the directory name.
+struct IgnoreFilter<'t> {
+    dir_names: Vec<&'t str>,
+    exhaustive: Option<wax::Any<'t>>,
+    nonexhaustive: Option<wax::Any<'t>>,
+}
+
+/// Returns `<name>` if `pattern` is exactly `**/<name>/**` and `<name>` has no glob syntax.
+fn literal_dir_pattern(pattern: &str) -> Option<&str> {
+    let name = pattern.strip_prefix("**/")?.strip_suffix("/**")?;
+    let is_plain = !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    is_plain.then_some(name)
+}
+
+impl<'t> IgnoreFilter<'t> {
+    fn new(patterns: &[&'t str]) -> Result<Self, wax::BuildError> {
+        let mut dir_names = Vec::new();
+        let mut globs = Vec::new();
+        for pattern in patterns {
+            match literal_dir_pattern(pattern) {
+                Some(name) => dir_names.push(name),
+                None => globs.push(wax::Glob::new(pattern)?),
+            }
+        }
+        let (exhaustive, nonexhaustive): (Vec<_>, Vec<_>) = globs
+            .into_iter()
+            .partition(|glob| glob.is_exhaustive().is_always());
+        let compile = |globs: Vec<wax::Glob<'t>>| {
+            if globs.is_empty() {
+                Ok(None)
+            } else {
+                wax::any(globs).map(Some)
+            }
+        };
+        Ok(Self {
+            dir_names,
+            exhaustive: compile(exhaustive)?,
+            nonexhaustive: compile(nonexhaustive)?,
+        })
+    }
+
+    fn prunes_dir(&self, relative: &Path) -> bool {
+        // Ancestors were already checked on the way down, so only the last component matters.
+        let name_matches = !self.dir_names.is_empty()
+            && relative
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| self.dir_names.contains(&name));
+        name_matches
+            || self
+                .exhaustive
+                .as_ref()
+                .is_some_and(|any| any.is_match(relative))
+    }
+
+    fn skips_file(&self, relative: &Path) -> bool {
+        self.prunes_dir(relative)
+            || self
+                .nonexhaustive
+                .as_ref()
+                .is_some_and(|any| any.is_match(relative))
+    }
+}
+
 /// Walks `root` and returns every directory containing a `Cargo.toml`, skipping
 /// paths matching `ignored_patterns`. Workspace members are marked with their parent.
 ///
-/// Entries that cannot be read (e.g. permission denied) are reported on stderr and skipped.
+/// Directories are read in parallel. Symbolic links are not followed. Directories that
+/// cannot be read (e.g. permission denied) are reported on stderr and skipped.
 pub fn find_cargo_projects(
     root: impl AsRef<Path>,
     ignored_patterns: &[&str],
 ) -> Result<HashMap<PathBuf, CargoProject>, Box<dyn std::error::Error>> {
-    let glob = wax::Glob::new("**/Cargo.toml")?;
-    let walk = glob.walk(root.as_ref());
+    let root = root.as_ref();
+    let filter = IgnoreFilter::new(ignored_patterns)?;
 
-    let mut manifest_dirs: Vec<PathBuf> = if ignored_patterns.is_empty() {
-        collect_manifest_dirs(walk)
-    } else {
-        collect_manifest_dirs(walk.not(wax::any(ignored_patterns.iter().copied()))?)
-    };
-    manifest_dirs.sort();
-
-    let manifests: Vec<(PathBuf, Option<WorkspaceManifest>)> = manifest_dirs
-        .par_iter()
-        .map(|path| {
-            let manifest = std::fs::read_to_string(path.join("Cargo.toml"))
-                .ok()
-                .and_then(|contents| parse_workspace(&contents));
-            (path.clone(), manifest)
-        })
-        .collect();
+    let mut manifests = walk_dir(root, root, &filter);
+    manifests.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+    let manifest_dirs: Vec<PathBuf> = manifests.iter().map(|(path, _)| path.clone()).collect();
 
     let cargo_projects = manifests
         .into_iter()
@@ -196,29 +257,66 @@ pub fn find_cargo_projects(
     Ok(cargo_projects)
 }
 
-fn collect_manifest_dirs<I, E>(entries: I) -> Vec<PathBuf>
-where
-    I: Iterator<Item = Result<E, wax::walk::WalkError>>,
-    E: Entry,
-{
-    entries
-        .filter_map(|entry| {
-            let entry = entry
-                .inspect_err(|err| eprintln!("Error: {}", err.to_string().red()))
-                .ok()?;
-            if entry.file_type().is_file() {
-                Some(
-                    entry
-                        .path()
-                        .parent()
-                        .expect("Failed to find parent directory")
-                        .to_path_buf(),
-                )
-            } else {
-                None
+type ManifestEntry = (PathBuf, Option<WorkspaceManifest>);
+
+/// Reads `dir`, records it if it holds a `Cargo.toml`, and recurses into its
+/// subdirectories in parallel.
+fn walk_dir(root: &Path, dir: &Path, filter: &IgnoreFilter) -> Vec<ManifestEntry> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            report_walk_error(dir, &err);
+            return Vec::new();
+        }
+    };
+
+    let mut found = Vec::new();
+    let mut sub_dirs = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                report_walk_error(dir, &err);
+                continue;
             }
-        })
-        .collect()
+        };
+        // `DirEntry::file_type` does not follow symbolic links.
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            let path = entry.path();
+            if !filter.prunes_dir(relative_to(root, &path)) {
+                sub_dirs.push(path);
+            }
+        } else if file_type.is_file() && entry.file_name() == "Cargo.toml" {
+            let path = entry.path();
+            if !filter.skips_file(relative_to(root, &path)) {
+                let manifest = std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|contents| parse_workspace(&contents));
+                found.push((dir.to_path_buf(), manifest));
+            }
+        }
+    }
+
+    found.par_extend(
+        sub_dirs
+            .par_iter()
+            .flat_map_iter(|sub_dir| walk_dir(root, sub_dir, filter)),
+    );
+    found
+}
+
+fn relative_to<'p>(root: &Path, path: &'p Path) -> &'p Path {
+    path.strip_prefix(root).unwrap_or(path)
+}
+
+fn report_walk_error(dir: &Path, err: &io::Error) {
+    eprintln!(
+        "Error: {}",
+        format!("failed to read {}: {err}", dir.display()).red()
+    );
 }
 
 /// Marks every project listed as a member of a workspace with [`CargoWorkspace::Parent`].
@@ -431,6 +529,65 @@ mod tests {
         let resolved =
             resolve_workspace_members(Path::new("/r"), &manifest(&["[unclosed*"], &[]), &projects);
         assert!(resolved.is_empty());
+    }
+
+    #[test]
+    fn literal_dir_pattern_detection() {
+        assert_eq!(literal_dir_pattern("**/target/**"), Some("target"));
+        assert_eq!(literal_dir_pattern("**/.venv/**"), Some(".venv"));
+        assert_eq!(
+            literal_dir_pattern("**/node_modules/**"),
+            Some("node_modules")
+        );
+        assert_eq!(literal_dir_pattern("**/tar*/**"), None);
+        assert_eq!(literal_dir_pattern("**/a/b/**"), None);
+        assert_eq!(literal_dir_pattern("target/**"), None);
+        assert_eq!(literal_dir_pattern("**/(?i)target/**"), None);
+        assert_eq!(literal_dir_pattern("**/../**"), None);
+    }
+
+    #[test]
+    fn literal_dir_fast_path_agrees_with_wax() {
+        let candidates = [
+            "target",
+            "a/target",
+            "a/b/target",
+            "targets",
+            "a/target2",
+            "a/my-target",
+            "Target",
+            "a/target/Cargo.toml",
+            "a/.venv",
+            "a/venv",
+        ];
+        for pattern in ["**/target/**", "**/.venv/**"] {
+            let fast = IgnoreFilter::new(&[pattern]).unwrap();
+            assert_eq!(fast.dir_names, vec![literal_dir_pattern(pattern).unwrap()]);
+            let glob = wax::Glob::new(pattern).unwrap();
+            assert!(glob.is_exhaustive().is_always());
+            for candidate in candidates {
+                // Walk order: every ancestor is checked before its children.
+                let path = Path::new(candidate);
+                let fast_pruned = path
+                    .ancestors()
+                    .filter(|a| !a.as_os_str().is_empty())
+                    .any(|a| fast.prunes_dir(a));
+                assert_eq!(
+                    fast_pruned,
+                    glob.is_match(path),
+                    "pattern {pattern}, path {candidate}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nonexhaustive_pattern_skips_only_matching_manifest() {
+        let filter = IgnoreFilter::new(&["**/skip/Cargo.toml"]).unwrap();
+        assert!(filter.dir_names.is_empty());
+        assert!(!filter.prunes_dir(Path::new("a/skip")));
+        assert!(filter.skips_file(Path::new("a/skip/Cargo.toml")));
+        assert!(!filter.skips_file(Path::new("a/keep/Cargo.toml")));
     }
 
     #[test]
