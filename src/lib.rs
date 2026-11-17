@@ -159,6 +159,16 @@ struct IgnoreFilter<'t> {
     nonexhaustive: Option<wax::Any<'t>>,
 }
 
+/// Compares path component names the way `wax` does: case-insensitively on Windows,
+/// case-sensitively elsewhere.
+fn path_names_equal(a: &str, b: &str) -> bool {
+    if cfg!(windows) {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
+}
+
 /// Returns `<name>` if `pattern` is exactly `**/<name>/**` and `<name>` has no glob syntax.
 fn literal_dir_pattern(pattern: &str) -> Option<&str> {
     let name = pattern.strip_prefix("**/")?.strip_suffix("/**")?;
@@ -204,7 +214,7 @@ impl<'t> IgnoreFilter<'t> {
             && relative
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| self.dir_names.contains(&name));
+                .is_some_and(|name| self.dir_names.iter().any(|dir| path_names_equal(dir, name)));
         name_matches
             || self
                 .exhaustive
@@ -289,7 +299,12 @@ fn walk_dir(root: &Path, dir: &Path, filter: &IgnoreFilter) -> Vec<ManifestEntry
             if !filter.prunes_dir(relative_to(root, &path)) {
                 sub_dirs.push(path);
             }
-        } else if file_type.is_file() && entry.file_name() == "Cargo.toml" {
+        } else if file_type.is_file()
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| path_names_equal(name, "Cargo.toml"))
+        {
             let path = entry.path();
             if !filter.skips_file(relative_to(root, &path)) {
                 let manifest = std::fs::read_to_string(&path)
