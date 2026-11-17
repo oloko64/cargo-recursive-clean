@@ -105,7 +105,7 @@ fn is_glob(member: &str) -> bool {
 ///
 /// Plain members are joined to `workspace_dir`. Glob members (e.g. `crates/*`) are
 /// matched against `projects`, the directories known to contain a `Cargo.toml`.
-/// Paths under any `exclude` entry are dropped.
+/// Paths under any `exclude` entry, and the workspace root itself, are dropped.
 pub fn resolve_workspace_members(
     workspace_dir: &Path,
     manifest: &WorkspaceManifest,
@@ -139,7 +139,11 @@ pub fn resolve_workspace_members(
         );
     }
 
-    resolved.retain(|member| !excluded.iter().any(|exclude| member.starts_with(exclude)));
+    // A workspace may list its own directory (`members = ["."]`). The root is the
+    // workspace itself, not one of its members, so it is dropped.
+    resolved.retain(|member| {
+        member != workspace_dir && !excluded.iter().any(|exclude| member.starts_with(exclude))
+    });
     resolved.sort();
     resolved.dedup();
     resolved
@@ -339,6 +343,10 @@ pub fn find_cargo_workspaces(cargo_projects: &HashMap<PathBuf, CargoProject>) {
     for (project_path, project) in cargo_projects {
         if let CargoWorkspace::WorkspaceMembers(sub_paths) = &*project.workspace.borrow() {
             for sub_path in sub_paths {
+                // The project is already borrowed above, so a self-reference would panic.
+                if sub_path == project_path {
+                    continue;
+                }
                 if let Some(project) = cargo_projects.get(sub_path) {
                     // RefCell is used here to allow for interior mutability of the workspace
                     // As we need to have two borrows of cargo_projects, one being mutable
@@ -457,6 +465,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn find_cargo_workspaces_skips_self_member() {
+        // A workspace listing its own directory must not be borrowed mutably while borrowed.
+        let map = HashMap::from([
+            (
+                p("/ws"),
+                CargoProject::new(CargoWorkspace::WorkspaceMembers(vec![
+                    p("/ws/."),
+                    p("/ws/member"),
+                ])),
+            ),
+            (p("/ws/member"), CargoProject::new(CargoWorkspace::None)),
+        ]);
+
+        find_cargo_workspaces(&map);
+
+        assert_eq!(
+            workspace_of(&map, "/ws/member"),
+            CargoWorkspace::Parent(p("/ws"))
+        );
+        assert!(matches!(
+            workspace_of(&map, "/ws"),
+            CargoWorkspace::WorkspaceMembers(_)
+        ));
+    }
+
     fn manifest(members: &[&str], exclude: &[&str]) -> WorkspaceManifest {
         WorkspaceManifest {
             members: members.iter().map(|m| m.to_string()).collect(),
@@ -502,6 +536,13 @@ mod tests {
         let resolved =
             resolve_workspace_members(Path::new("/r"), &manifest(&["b", "./a/"], &[]), &[]);
         assert_eq!(resolved, vec![p("/r/a"), p("/r/b")]);
+    }
+
+    #[test]
+    fn resolve_members_drops_workspace_root() {
+        let resolved =
+            resolve_workspace_members(Path::new("/r"), &manifest(&[".", "./", "a"], &[]), &[]);
+        assert_eq!(resolved, vec![p("/r/a")]);
     }
 
     #[test]

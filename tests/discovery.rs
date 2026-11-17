@@ -228,3 +228,33 @@ fn unreadable_directory_is_skipped() {
     assert!(projects.contains_key(&root.join("ok")));
     // Root can read anything, so only assert the walk did not fail.
 }
+
+#[test]
+fn workspace_listing_its_own_directory_does_not_panic() {
+    // `members = ["."]` is valid for cargo: the root package is a member of its own workspace.
+    for self_member in ["\".\"", "\"./\""] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write_manifest(
+            &root.join("ws"),
+            &format!(
+                "{}\n[workspace]\nmembers = [{self_member}, \"member\"]\n",
+                package("ws")
+            ),
+        );
+        write_manifest(&root.join("ws/member"), &package("member"));
+
+        let projects = find_cargo_projects(root, DEFAULT_IGNORED_PATTERNS).unwrap();
+
+        // The root must stay a workspace, not become a member of itself, or it would never be cleaned.
+        assert_eq!(
+            *projects[&root.join("ws")].workspace.borrow(),
+            CargoWorkspace::WorkspaceMembers(vec![root.join("ws/member")]),
+            "members = [{self_member}, \"member\"]"
+        );
+        assert_eq!(
+            *projects[&root.join("ws/member")].workspace.borrow(),
+            CargoWorkspace::Parent(root.join("ws"))
+        );
+    }
+}
