@@ -45,3 +45,50 @@ pub fn get_args() -> &'static Arguments {
         Arguments::parse_from(raw_args)
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Arguments, clap::Error> {
+        Arguments::try_parse_from(
+            std::iter::once("cargo-recursive-clean").chain(args.iter().copied()),
+        )
+    }
+
+    #[test]
+    fn defaults() {
+        let args = parse(&[]).unwrap();
+        assert_eq!(args.path, ".");
+        assert!(!args.release && !args.doc && !args.dry_run && !args.yes);
+        assert!(args.ignored_patterns.is_none());
+    }
+
+    #[test]
+    fn all_flags() {
+        let args = parse(&["/tmp/x", "-r", "--dry", "-y"]).unwrap();
+        assert_eq!(args.path, "/tmp/x");
+        assert!(args.release && args.dry_run && args.yes);
+        assert!(!args.doc);
+    }
+
+    #[test]
+    fn release_and_doc_are_mutually_exclusive() {
+        assert!(parse(&["--release", "--doc"]).is_err());
+    }
+
+    #[test]
+    fn ignored_patterns_are_comma_separated() {
+        let args = parse(&["--ignored-patterns", "**/a/**,**/b/**"]).unwrap();
+        assert_eq!(
+            args.ignored_patterns.unwrap(),
+            vec!["**/a/**".to_owned(), "**/b/**".to_owned()]
+        );
+    }
+
+    #[test]
+    fn empty_ignored_patterns() {
+        let args = parse(&["--ignored-patterns", ""]).unwrap();
+        assert_eq!(args.ignored_patterns.unwrap(), vec![String::new()]);
+    }
+}
